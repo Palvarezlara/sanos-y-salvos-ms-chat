@@ -1,0 +1,8 @@
+# Reducido a propósito, mismo patrón que ms-mascotas y ms-alertas: el resto de la
+# configuración (puerto, Mongo, Cognito, Eureka, chat) vive en
+# sanos-y-salvos-config_server/.../config/ms-chat.yml.
+spring:
+  application:
+    name: ms-chat
+  config:
+    import: "optional:file:.env[.properties],optional:configserver:${CONFIG_SERVER_URL:http://localhost:8888}"

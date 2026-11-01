@@ -1,0 +1,25 @@
+# Valores dummy solo para tests: el contexto de Spring carga sin credenciales
+# reales de Cognito, sin Mongo y sin config-server ni Eureka.
+cognito:
+  client-id: test-client-id
+
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_test00000
+          jwk-set-uri: https://cognito-idp.us-east-1.amazonaws.com/us-east-1_test00000/.well-known/jwks.json
+  config:
+    import: ""
+  cloud:
+    config:
+      enabled: false
+
+eureka:
+  client:
+    enabled: false
+
+chat:
+  ticket-secret: secreto-de-prueba-de-al-menos-32-caracteres!!
+  crear-indices: false

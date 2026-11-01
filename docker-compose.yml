@@ -1,0 +1,31 @@
+services:
+  chat:
+    build: .
+    container_name: ms-chat
+    restart: unless-stopped
+    environment:
+      # Igual que ms-mascotas y ms-alertas: todo bajo /api/v1, que es lo que reenvía el BFF
+      SPRING_MVC_SERVLET_PATH: /api/v1
+      PORT: 8084
+      # Base propia en el mismo cluster de Atlas (una BD por microservicio): la misma URI que
+      # ms-mascotas pero terminando en /sanos_chat
+      MONGODB_URI: ${MONGODB_URI}
+      CONFIG_SERVER_URL: http://config-server:8888
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      COGNITO_ISSUER_URI: https://cognito-idp.us-east-1.amazonaws.com/${COGNITO_USER_POOL_ID}
+      COGNITO_JWK_SET_URI: https://cognito-idp.us-east-1.amazonaws.com/${COGNITO_USER_POOL_ID}/.well-known/jwks.json
+      COGNITO_CLIENT_ID: ${COGNITO_CLIENT_ID}
+      # Clave compartida con el BFF para firmar/verificar el ticket del WebSocket (mínimo 32 caracteres)
+      CHAT_TICKET_SECRET: ${CHAT_TICKET_SECRET:?Define CHAT_TICKET_SECRET en .env}
+      CHAT_ALLOWED_ORIGINS: ${CHAT_ALLOWED_ORIGINS:-http://localhost:5173}
+      CHAT_RETENCION: ${CHAT_RETENCION:-90d}
+      MS_MASCOTAS_BASE_URL: http://ms-mascotas:8082
+    ports:
+      - "8084:8084"
+    networks:
+      - sanos-y-salvos-network
+
+networks:
+  sanos-y-salvos-network:
+    external: true
+    name: sanos-y-salvos-network

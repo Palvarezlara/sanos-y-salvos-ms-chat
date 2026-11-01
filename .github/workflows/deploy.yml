@@ -1,0 +1,41 @@
+name: Build y push a Docker Hub
+
+on:
+  push:
+    branches:
+      - release
+    tags:
+      - "v*" # ej: v1.0.0 -> publica la imagen como ms-chat:1.0.0
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del codigo
+        uses: actions/checkout@v4
+
+      - name: Login a Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # push a release -> :latest y :<sha> | push de un tag vX.Y.Z -> :X.Y.Z, :X.Y y :<sha>
+      - name: Calcular tags de la imagen
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/ms-chat
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/release' }}
+            type=sha,prefix=,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build y push de la imagen
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
