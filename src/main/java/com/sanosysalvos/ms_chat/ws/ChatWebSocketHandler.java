@@ -19,6 +19,7 @@ import com.sanosysalvos.ms_chat.config.ChatProperties;
 import com.sanosysalvos.ms_chat.dto.MensajeDto;
 import com.sanosysalvos.ms_chat.exception.RecursoNoEncontradoException;
 import com.sanosysalvos.ms_chat.exception.SolicitudInvalidaException;
+import com.sanosysalvos.ms_chat.service.AvisoCorreoService;
 import com.sanosysalvos.ms_chat.service.ChatService;
 import com.sanosysalvos.ms_chat.service.ChatService.ResultadoEnvio;
 
@@ -48,6 +49,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private static final String ATRIBUTO_SEGURA = "segura";
 
     private final ChatService chatService;
+    private final AvisoCorreoService avisoCorreo;
     private final ChatProperties props;
     private final Clock clock;
     private final JsonMapper json = JsonMapper.builder().build();
@@ -55,8 +57,10 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private final Map<String, Set<WebSocketSession>> sesionesPorUsuario = new ConcurrentHashMap<>();
     private final Map<String, LimitadorVentana> limitadores = new ConcurrentHashMap<>();
 
-    public ChatWebSocketHandler(ChatService chatService, ChatProperties props, Clock clock) {
+    public ChatWebSocketHandler(ChatService chatService, AvisoCorreoService avisoCorreo, ChatProperties props,
+            Clock clock) {
         this.chatService = chatService;
+        this.avisoCorreo = avisoCorreo;
         this.props = props;
         this.clock = clock;
     }
@@ -126,6 +130,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
                 MensajeDto dto = chatService.aDto(resultado.mensaje(), participante);
                 enviarAUsuario(participante, Map.of("tipo", "mensaje", "mensaje", dto));
             }
+            /* si la otra persona no está conectada, se le avisa por correo (sin el texto del mensaje) */
+            avisoCorreo.avisarSiCorresponde(resultado.conversacion(), sub, this::estaConectado);
         } catch (SolicitudInvalidaException e) {
             enviarError(segura, "solicitud_invalida", e.getMessage());
         } catch (RecursoNoEncontradoException e) {
@@ -155,6 +161,11 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void handleTransportError(WebSocketSession sesion, Throwable error) {
         log.debug("Error de transporte en la sesion {}: {}", sesion.getId(), error.getClass().getSimpleName());
+    }
+
+    private boolean estaConectado(String sub) {
+        Set<WebSocketSession> conjunto = sesionesPorUsuario.get(sub);
+        return conjunto != null && !conjunto.isEmpty();
     }
 
     private void enviarAUsuario(String sub, Object marco) {

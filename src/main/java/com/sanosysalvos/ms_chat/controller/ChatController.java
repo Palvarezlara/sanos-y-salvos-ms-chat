@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -39,9 +40,11 @@ public class ChatController {
 
     @PostMapping("/conversaciones")
     public ResponseEntity<ConversacionDto> iniciar(@AuthenticationPrincipal Jwt jwt,
+            @RequestHeader(value = "X-User-Email", required = false) String email,
             @Valid @RequestBody IniciarConversacionRequest solicitud) {
+        /* X-User-Email lo pone el BFF a partir del id_token ya validado (y descarta el que mande el cliente) */
         return ResponseEntity.status(HttpStatus.OK)
-                .body(chatService.iniciarConversacion(jwt.getSubject(), solicitud.mascotaId()));
+                .body(chatService.iniciarConversacion(jwt.getSubject(), solicitud.mascotaId(), email));
     }
 
     @GetMapping("/conversaciones")

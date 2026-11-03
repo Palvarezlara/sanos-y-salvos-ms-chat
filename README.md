@@ -43,6 +43,15 @@ Códigos de error: `no_encontrada`, `solicitud_invalida`, `formato_invalido`, `t
 - **Nunca se registra el contenido de los mensajes ni el ticket.**
 - **Retención:** índices TTL en Mongo borran solos los mensajes (y las conversaciones sin actividad) a los `CHAT_RETENCION` (por defecto 90 días). Cambiar el plazo con los índices ya creados exige borrarlos a mano (o `collMod`).
 
+## Aviso por correo de mensajes nuevos
+
+Si alguien recibe un mensaje y **no tiene el chat abierto** (ninguna conexión WebSocket), ms-chat publica el evento `chat.mensaje.nuevo` en el topic SNS `sanos-eventos`; **ms-alertas** lo consume por SQS y envía el correo ("Tienes un mensaje nuevo sobre *X*" + enlace al chat).
+
+- El correo **no incluye el texto del mensaje**, solo el nombre de la mascota y el enlace.
+- Como máximo **un aviso cada `CHAT_AVISO_INTERVALO`** (30 min por defecto) por conversación y persona.
+- Si SNS falla, el chat sigue funcionando (se registra una advertencia).
+- **Datos:** para poder avisar se guardan los correos de los dos participantes dentro de la conversación (el del dueño viene de ms-mascotas, el de la otra persona del `id_token` validado por el BFF en el header `X-User-Email`). Nunca se devuelven al frontend y se borran junto con la conversación (índice TTL).
+
 ## Límites conocidos
 
 - Las sesiones viven en memoria: con más de una instancia, un mensaje solo llega a quienes estén en la misma instancia. Para escalar horizontalmente hace falta un bus que reparta los mensajes entre instancias (SNS/SQS o Kafka).

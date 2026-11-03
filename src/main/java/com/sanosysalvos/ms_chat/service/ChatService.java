@@ -44,10 +44,15 @@ public class ChatService {
     }
 
     /** Resultado de guardar un mensaje: a quiénes hay que entregárselo. */
-    public record ResultadoEnvio(Mensaje mensaje, List<String> participantes) {
+    public record ResultadoEnvio(Mensaje mensaje, List<String> participantes, Conversacion conversacion) {
     }
 
     public ConversacionDto iniciarConversacion(String sub, String mascotaId) {
+        return iniciarConversacion(sub, mascotaId, null);
+    }
+
+    /** emailInteresado viene del id_token validado por el BFF; solo se usa para avisarle de respuestas. */
+    public ConversacionDto iniciarConversacion(String sub, String mascotaId, String emailInteresado) {
         DuenoMascotaDto dueno = mascotas.obtenerDueno(mascotaId)
                 .orElseThrow(() -> new RecursoNoEncontradoException("Reporte no encontrado"));
         if (dueno.duenoSub() == null || dueno.duenoSub().isBlank()) {
@@ -60,6 +65,9 @@ public class ChatService {
         String clave = Conversacion.claveDe(mascotaId, dueno.duenoSub(), sub);
         Conversacion conversacion = conversaciones.findByClave(clave)
                 .orElseGet(() -> crear(clave, dueno, sub));
+        if (conversacion.registrarCorreos(correoValido(dueno.duenoEmail()), correoValido(emailInteresado))) {
+            conversaciones.save(conversacion);
+        }
         return aDto(conversacion, sub);
     }
 
@@ -94,7 +102,19 @@ public class ChatService {
         Mensaje guardado = mensajes.save(new Mensaje(conversacion.getId(), sub, limpio, ahora));
         conversacion.registrarMensaje(ahora);
         conversaciones.save(conversacion);
-        return new ResultadoEnvio(guardado, conversacion.getParticipantes());
+        return new ResultadoEnvio(guardado, conversacion.getParticipantes(), conversacion);
+    }
+
+    /* null si no parece un correo: evita guardar basura o saltos de línea que acaben en un encabezado de correo */
+    static String correoValido(String correo) {
+        if (correo == null) {
+            return null;
+        }
+        String limpio = correo.strip();
+        if (limpio.isEmpty() || limpio.length() > 150 || !limpio.matches("[^\\s@\\r\\n]+@[^\\s@\\r\\n]+\\.[^\\s@\\r\\n]+")) {
+            return null;
+        }
+        return limpio;
     }
 
     public MensajeDto aDto(Mensaje mensaje, String paraSub) {

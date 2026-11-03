@@ -17,6 +17,7 @@
 	<properties>
 		<java.version>17</java.version>
 		<spring-cloud.version>2025.1.1</spring-cloud.version>
+		<aws.sdk.version>2.31.78</aws.sdk.version>
 	</properties>
 
 	<!-- BOM de Spring Cloud, misma versión que ms-mascotas, ms-alertas y el BFF -->
@@ -29,10 +30,21 @@
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
+			<dependency>
+				<groupId>software.amazon.awssdk</groupId>
+				<artifactId>bom</artifactId>
+				<version>${aws.sdk.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
 		</dependencies>
 	</dependencyManagement>
 
 	<dependencies>
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>sns</artifactId>
+		</dependency>
 		<!-- Registro en Eureka y configuración centralizada: mismo patrón que el resto de los servicios -->
 		<dependency>
 			<groupId>org.springframework.cloud</groupId>

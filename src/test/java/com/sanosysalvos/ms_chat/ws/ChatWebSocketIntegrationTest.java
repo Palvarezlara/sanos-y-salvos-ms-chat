@@ -1,5 +1,13 @@
 package com.sanosysalvos.ms_chat.ws;
 
+import com.sanosysalvos.ms_chat.messaging.ChatEventPublisher;
+import com.sanosysalvos.ms_chat.dto.AvisoMensajeEvento;
+import org.mockito.ArgumentCaptor;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.doThrow;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -49,6 +57,8 @@ class ChatWebSocketIntegrationTest {
     private MensajeRepository mensajes;
     @MockitoBean
     private MascotasClient mascotasClient;
+    @MockitoBean
+    private ChatEventPublisher publisher;
 
     /** Cliente de prueba: guarda en una cola todo lo que el servidor le manda. */
     private static final class Cliente extends TextWebSocketHandler {
@@ -180,5 +190,77 @@ class ChatWebSocketIntegrationTest {
         dueno.enviar("{\"tipo\":\"mensaje\",\"conversacionId\":\"c1\",\"texto\":\"uno de más\"}");
 
         assertThat(dueno.siguiente()).contains("demasiados_mensajes");
+    }
+
+    // ---- aviso por correo a quien no está conectado ----
+    // Cada prueba usa usuarios propios: el handler es un singleton compartido y las demás pruebas
+    // dejan sesiones abiertas, así que reutilizar "dueno-sub" haría creer que el dueño está conectado.
+
+    private String[] conCorreos() {
+        String dueno = "dueno-" + UUID.randomUUID();
+        String interesado = "interesado-" + UUID.randomUUID();
+        Conversacion c = new Conversacion("m1", "Firu", dueno, interesado, Instant.now());
+        ReflectionTestUtils.setField(c, "id", "c1");
+        c.registrarCorreos("dueno@example.com", "interesado@example.com");
+        when(conversaciones.findById("c1")).thenReturn(Optional.of(c));
+        return new String[] { dueno, interesado };
+    }
+
+    private static String mensaje(String texto) {
+        return "{\"tipo\":\"mensaje\",\"conversacionId\":\"c1\",\"texto\":\"" + texto + "\"}";
+    }
+
+    @Test
+    void siElDuenoNoEstaConectadoSeLeAvisaPorCorreoSinElTextoDelMensaje() throws Exception {
+        String[] subs = conCorreos();
+        Cliente interesado = conectar(subs[1]);
+
+        interesado.enviar(mensaje("texto-secreto"));
+        interesado.siguiente();
+
+        ArgumentCaptor<AvisoMensajeEvento> captor = ArgumentCaptor.forClass(AvisoMensajeEvento.class);
+        verify(publisher, timeout(3000)).publicarMensajeNuevo(captor.capture());
+        assertThat(captor.getValue().emailDestino()).isEqualTo("dueno@example.com");
+        assertThat(captor.getValue().conversacionId()).isEqualTo("c1");
+        assertThat(captor.getValue().toString()).doesNotContain("texto-secreto");
+    }
+
+    @Test
+    void siLaOtraPersonaEstaConectadaNoHayCorreo() throws Exception {
+        String[] subs = conCorreos();
+        Cliente dueno = conectar(subs[0]);
+        Cliente interesado = conectar(subs[1]);
+
+        interesado.enviar(mensaje("hola"));
+        interesado.siguiente();
+        dueno.siguiente(); /* el dueño lo recibió en vivo */
+
+        verify(publisher, never()).publicarMensajeNuevo(any());
+    }
+
+    @Test
+    void variosMensajesSeguidosGeneranUnSoloAviso() throws Exception {
+        String[] subs = conCorreos();
+        Cliente interesado = conectar(subs[1]);
+
+        for (int i = 0; i < 3; i++) {
+            interesado.enviar(mensaje("mensaje " + i));
+            interesado.siguiente();
+        }
+
+        verify(publisher, timeout(3000).times(1)).publicarMensajeNuevo(any());
+    }
+
+    @Test
+    void siFallaElAvisoElChatSigueFuncionando() throws Exception {
+        String[] subs = conCorreos();
+        doThrow(new RuntimeException("SNS caído")).when(publisher).publicarMensajeNuevo(any());
+        Cliente interesado = conectar(subs[1]);
+
+        interesado.enviar(mensaje("hola"));
+
+        assertThat(interesado.siguiente()).contains("\"tipo\":\"mensaje\"").contains("\"mio\":true");
+        /* se intentó avisar (y falló), pero el mensaje se entregó igual */
+        verify(publisher, timeout(3000)).publicarMensajeNuevo(any());
     }
 }

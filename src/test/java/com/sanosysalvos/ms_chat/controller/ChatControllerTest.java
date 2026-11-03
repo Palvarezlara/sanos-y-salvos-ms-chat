@@ -60,7 +60,7 @@ class ChatControllerTest {
 
     @Test
     void elSubSalePorSiempreDelTokenNuncaDelCuerpo() throws Exception {
-        when(chatService.iniciarConversacion("usuario-1", "m1")).thenReturn(
+        when(chatService.iniciarConversacion("usuario-1", "m1", null)).thenReturn(
                 new ConversacionDto("c1", "m1", "Firu", false, Instant.parse("2026-10-30T12:00:00Z")));
 
         mockMvc.perform(post("/chat/conversaciones").with(jwt().jwt(j -> j.subject("usuario-1")))
@@ -69,7 +69,7 @@ class ChatControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value("c1"));
 
-        verify(chatService).iniciarConversacion("usuario-1", "m1");
+        verify(chatService).iniciarConversacion("usuario-1", "m1", null);
     }
 
     @Test
@@ -100,5 +100,19 @@ class ChatControllerTest {
                 .andExpect(status().isOk());
 
         verify(chatService).listarMensajes(eq("usuario-1"), eq("c1"), any(), eq(20));
+    }
+
+    @Test
+    void elCorreoDelHeaderQueMandaElBffLlegaAlServicio() throws Exception {
+        when(chatService.iniciarConversacion("usuario-1", "m1", "persona@example.com")).thenReturn(
+                new ConversacionDto("c1", "m1", "Firu", false, Instant.parse("2026-10-30T12:00:00Z")));
+
+        mockMvc.perform(post("/chat/conversaciones").with(jwt().jwt(j -> j.subject("usuario-1")))
+                        .header("X-User-Email", "persona@example.com")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mascotaId\":\"m1\"}"))
+                .andExpect(status().isOk());
+
+        verify(chatService).iniciarConversacion("usuario-1", "m1", "persona@example.com");
     }
 }
