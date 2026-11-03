@@ -23,3 +23,8 @@ eureka:
 chat:
   ticket-secret: secreto-de-prueba-de-al-menos-32-caracteres!!
   crear-indices: false
+
+aws:
+  region: us-east-1
+  sns:
+    topic-arn: arn:aws:sns:us-east-1:000000000000:test-topic

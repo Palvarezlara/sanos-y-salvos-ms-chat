@@ -8,8 +8,9 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 /**
  * Una conversación entre el dueño de un reporte y una persona interesada.
- * Los participantes se identifican solo por su sub de Cognito; no se guarda
- * nombre ni correo (minimización de datos, Ley 21.719).
+ * Los participantes se identifican por su sub de Cognito; no se guarda nombre. Los correos se
+ * guardan únicamente para avisar de mensajes nuevos: nunca se devuelven al frontend y se borran
+ * con la conversación (índice TTL), igual que los mensajes (minimización de datos, Ley 21.719).
  */
 @Document("conversaciones")
 public class Conversacion {
@@ -24,6 +25,11 @@ public class Conversacion {
     private List<String> participantes;
     private Instant creadaEn;
     private Instant ultimoMensajeEn;
+    /* solo para avisos por correo; ver comentario de la clase */
+    private String emailDueno;
+    private String emailInteresado;
+    private Instant ultimoAvisoDueno;
+    private Instant ultimoAvisoInteresado;
 
     protected Conversacion() {
     }
@@ -45,6 +51,42 @@ public class Conversacion {
 
     public boolean incluye(String sub) {
         return participantes != null && participantes.contains(sub);
+    }
+
+    /** Guarda los correos que lleguen (no nulos y distintos de los actuales); true si cambió algo. */
+    public boolean registrarCorreos(String nuevoEmailDueno, String nuevoEmailInteresado) {
+        boolean cambio = false;
+        if (nuevoEmailDueno != null && !nuevoEmailDueno.equals(this.emailDueno)) {
+            this.emailDueno = nuevoEmailDueno;
+            cambio = true;
+        }
+        if (nuevoEmailInteresado != null && !nuevoEmailInteresado.equals(this.emailInteresado)) {
+            this.emailInteresado = nuevoEmailInteresado;
+            cambio = true;
+        }
+        return cambio;
+    }
+
+    /** Correo de ese participante, o null si no se conoce. */
+    public String emailDe(String sub) {
+        if (sub == null) {
+            return null;
+        }
+        return sub.equals(duenoSub) ? emailDueno : emailInteresado;
+    }
+
+    /** true si pasó al menos "intervalo" desde el último aviso a esa persona (o nunca se le avisó). */
+    public boolean puedeAvisar(String sub, Instant ahora, java.time.Duration intervalo) {
+        Instant ultimo = sub.equals(duenoSub) ? ultimoAvisoDueno : ultimoAvisoInteresado;
+        return ultimo == null || !ultimo.plus(intervalo).isAfter(ahora);
+    }
+
+    public void registrarAviso(String sub, Instant ahora) {
+        if (sub.equals(duenoSub)) {
+            this.ultimoAvisoDueno = ahora;
+        } else {
+            this.ultimoAvisoInteresado = ahora;
+        }
     }
 
     public void registrarMensaje(Instant momento) {

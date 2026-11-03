@@ -53,7 +53,7 @@ class ChatServiceTest {
     @BeforeEach
     void preparar() {
         ChatProperties props = new ChatProperties("x", List.of(), Duration.ofDays(90),
-                "http://ms-mascotas:8082", 20, 20, 10, false);
+                "http://ms-mascotas:8082", 20, 20, 10, false, Duration.ofMinutes(30));
         servicio = new ChatService(conversaciones, mensajes, mascotas, props, Clock.fixed(AHORA, ZoneOffset.UTC));
     }
 
@@ -195,5 +195,43 @@ class ChatServiceTest {
         assertThatThrownBy(() -> servicio.listarMensajes("intruso", "c1", null, 50))
                 .isInstanceOf(RecursoNoEncontradoException.class);
         verify(mensajes, never()).findByConversacionIdAndEnviadoEnBefore(any(), any(), any());
+    }
+
+    @Test
+    void alIniciarGuardaElCorreoDelDuenoYElDelInteresadoSoloParaAvisar() {
+        when(mascotas.obtenerDueno("m1")).thenReturn(
+                Optional.of(new DuenoMascotaDto("m1", "Firu", "dueno", "dueno@example.com")));
+        Conversacion existente = conversacionConId("c1");
+        when(conversaciones.findByClave(any())).thenReturn(Optional.of(existente));
+
+        servicio.iniciarConversacion("interesado", "m1", "  interesado@example.com ");
+
+        assertThat(existente.emailDe("dueno")).isEqualTo("dueno@example.com");
+        assertThat(existente.emailDe("interesado")).isEqualTo("interesado@example.com");
+        verify(conversaciones).save(existente);
+    }
+
+    @Test
+    void ignoraCorreosQueNoParecenCorreosOTraenSaltosDeLinea() {
+        when(mascotas.obtenerDueno("m1")).thenReturn(Optional.of(new DuenoMascotaDto("m1", "Firu", "dueno", "no-es-correo")));
+        Conversacion existente = conversacionConId("c1");
+        when(conversaciones.findByClave(any())).thenReturn(Optional.of(existente));
+
+        servicio.iniciarConversacion("interesado", "m1", "x@example.com\r\nBcc: victima@example.com");
+
+        assertThat(existente.emailDe("dueno")).isNull();
+        assertThat(existente.emailDe("interesado")).isNull();
+        verify(conversaciones, never()).save(any());
+    }
+
+    @Test
+    void elCorreoNuncaViajaEnLaRespuestaAlFrontend() {
+        when(mascotas.obtenerDueno("m1")).thenReturn(
+                Optional.of(new DuenoMascotaDto("m1", "Firu", "dueno", "dueno@example.com")));
+        when(conversaciones.findByClave(any())).thenReturn(Optional.of(conversacionConId("c1")));
+
+        ConversacionDto dto = servicio.iniciarConversacion("interesado", "m1", "interesado@example.com");
+
+        assertThat(dto.toString()).doesNotContain("@example.com");
     }
 }

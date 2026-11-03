@@ -20,6 +20,12 @@ services:
       CHAT_ALLOWED_ORIGINS: ${CHAT_ALLOWED_ORIGINS:-http://localhost:5173}
       CHAT_RETENCION: ${CHAT_RETENCION:-90d}
       MS_MASCOTAS_BASE_URL: http://ms-mascotas:8082
+      # Aviso por correo de mensajes nuevos: publica en SNS (LocalStack, que levanta ms-alertas);
+      # ms-alertas lo consume por SQS y envía el correo. En AWS estas variables las pone Terraform.
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_OVERRIDE: http://ms-alertas-localstack:4566
+      AWS_SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:sanos-eventos
+      CHAT_AVISO_INTERVALO: ${CHAT_AVISO_INTERVALO:-30m}
     ports:
       - "8084:8084"
     networks:

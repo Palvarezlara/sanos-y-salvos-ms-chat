@@ -20,7 +20,7 @@ class TicketValidatorTest {
 
     private TicketValidator validadorCon(String secreto) {
         return new TicketValidator(new ChatProperties(secreto, List.of(), Duration.ofDays(90),
-                "http://ms-mascotas:8082", 1000, 20, 10, false), RELOJ);
+                "http://ms-mascotas:8082", 1000, 20, 10, false, Duration.ofMinutes(30)), RELOJ);
     }
 
     private String ticket(String secreto, String sub, String jti, Instant vence, String audiencia) throws Exception {

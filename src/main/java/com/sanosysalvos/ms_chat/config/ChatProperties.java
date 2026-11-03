@@ -17,5 +17,7 @@ public record ChatProperties(
         @DefaultValue("1000") int maxLargoMensaje,
         @DefaultValue("20") int maxMensajesPorVentana,
         @DefaultValue("10") int ventanaSegundos,
-        @DefaultValue("true") boolean crearIndices) {
+        @DefaultValue("true") boolean crearIndices,
+        /* cada cuánto, como máximo, se avisa por correo de mensajes nuevos en una misma conversación */
+        @DefaultValue("30m") Duration avisoIntervalo) {
 }
