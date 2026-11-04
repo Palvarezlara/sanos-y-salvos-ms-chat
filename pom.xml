@@ -45,6 +45,10 @@
 			<groupId>software.amazon.awssdk</groupId>
 			<artifactId>sns</artifactId>
 		</dependency>
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>sqs</artifactId>
+		</dependency>
 		<!-- Registro en Eureka y configuración centralizada: mismo patrón que el resto de los servicios -->
 		<dependency>
 			<groupId>org.springframework.cloud</groupId>

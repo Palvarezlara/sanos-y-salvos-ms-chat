@@ -30,6 +30,8 @@ public class Conversacion {
     private String emailInteresado;
     private Instant ultimoAvisoDueno;
     private Instant ultimoAvisoInteresado;
+    /* sub de quien bloqueó: la conversación queda sin mensajes ni correos y la otra persona no puede reabrirla */
+    private String bloqueadaPor;
 
     protected Conversacion() {
     }
@@ -89,6 +91,19 @@ public class Conversacion {
         }
     }
 
+    public boolean estaBloqueada() {
+        return bloqueadaPor != null;
+    }
+
+    /** Deja solo la marca: borra los correos y los avisos; los mensajes los borra el servicio. */
+    public void bloquear(String sub) {
+        this.bloqueadaPor = sub;
+        this.emailDueno = null;
+        this.emailInteresado = null;
+        this.ultimoAvisoDueno = null;
+        this.ultimoAvisoInteresado = null;
+    }
+
     public void registrarMensaje(Instant momento) {
         this.ultimoMensajeEn = momento;
     }
@@ -119,6 +134,10 @@ public class Conversacion {
 
     public Instant getCreadaEn() {
         return creadaEn;
+    }
+
+    public String getBloqueadaPor() {
+        return bloqueadaPor;
     }
 
     public Instant getUltimoMensajeEn() {

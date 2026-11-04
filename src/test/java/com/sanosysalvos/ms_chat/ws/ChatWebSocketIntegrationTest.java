@@ -13,12 +13,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,11 +61,19 @@ class ChatWebSocketIntegrationTest {
     private MascotasClient mascotasClient;
     @MockitoBean
     private ChatEventPublisher publisher;
+    @org.springframework.beans.factory.annotation.Autowired
+    private ChatWebSocketHandler handler;
 
     /** Cliente de prueba: guarda en una cola todo lo que el servidor le manda. */
     private static final class Cliente extends TextWebSocketHandler {
         final LinkedBlockingQueue<String> recibidos = new LinkedBlockingQueue<>();
         WebSocketSession sesion;
+        volatile org.springframework.web.socket.CloseStatus cierre;
+
+        @Override
+        public void afterConnectionClosed(WebSocketSession s, org.springframework.web.socket.CloseStatus estado) {
+            cierre = estado;
+        }
 
         @Override
         protected void handleTextMessage(WebSocketSession s, TextMessage mensaje) {
@@ -87,11 +97,30 @@ class ChatWebSocketIntegrationTest {
         ReflectionTestUtils.setField(c, "id", "c1");
         when(conversaciones.findById("c1")).thenReturn(Optional.of(c));
         when(conversaciones.save(any(Conversacion.class))).thenAnswer(inv -> inv.getArgument(0));
+        /* el repositorio esta simulado: se reproduce el sello atomico de Mongo (gana quien lo pone primero
+           dentro del intervalo) para los dos participantes */
+        when(conversaciones.sellarAvisoDueno(any(), any(), any())).thenAnswer(sello(new AtomicReference<>()));
+        when(conversaciones.sellarAvisoInteresado(any(), any(), any())).thenAnswer(sello(new AtomicReference<>()));
         when(mensajes.save(any(Mensaje.class))).thenAnswer(inv -> {
             Mensaje m = inv.getArgument(0);
             ReflectionTestUtils.setField(m, "id", "msg-" + UUID.randomUUID());
             return m;
         });
+    }
+
+    private static org.mockito.stubbing.Answer<Long> sello(AtomicReference<Instant> ultimo) {
+        return inv -> {
+            Instant limite = inv.getArgument(1);
+            Instant ahora = inv.getArgument(2);
+            synchronized (ultimo) {
+                Instant previo = ultimo.get();
+                if (previo == null || !previo.isAfter(limite)) {
+                    ultimo.set(ahora);
+                    return 1L;
+                }
+                return 0L;
+            }
+        };
     }
 
     private Cliente conectar(String sub) throws Exception {
@@ -262,5 +291,71 @@ class ChatWebSocketIntegrationTest {
         assertThat(interesado.siguiente()).contains("\"tipo\":\"mensaje\"").contains("\"mio\":true");
         /* se intentó avisar (y falló), pero el mensaje se entregó igual */
         verify(publisher, timeout(3000)).publicarMensajeNuevo(any());
+    }
+
+    // ---- vida de la sesión y registro ----
+
+    private static void esperarCierre(Cliente cliente) throws InterruptedException {
+        for (int i = 0; i < 60 && cliente.cierre == null; i++) {
+            Thread.sleep(50);
+        }
+    }
+
+    @Test
+    void unaSesionVencidaSeCierraConElCodigoParaPedirUnTicketNuevo() throws Exception {
+        Cliente cliente = conectar("sesion-larga-" + UUID.randomUUID());
+        Duration original = (Duration) ReflectionTestUtils.getField(handler, "vidaMaxima");
+        ReflectionTestUtils.setField(handler, "vidaMaxima", Duration.ofMillis(1));
+        try {
+            Thread.sleep(30);
+            handler.cerrarSesionesVencidas();
+            esperarCierre(cliente);
+        } finally {
+            ReflectionTestUtils.setField(handler, "vidaMaxima", original);
+        }
+
+        assertThat(cliente.cierre).as("el servidor debía cerrar la sesión vencida").isNotNull();
+        assertThat(cliente.cierre.getCode()).isEqualTo(ChatWebSocketHandler.CODIGO_SESION_EXPIRADA);
+    }
+
+    @Test
+    void unaSesionSinActividadSeCierra() throws Exception {
+        Cliente cliente = conectar("sesion-quieta-" + UUID.randomUUID());
+        Duration original = (Duration) ReflectionTestUtils.getField(handler, "inactividadMaxima");
+        ReflectionTestUtils.setField(handler, "inactividadMaxima", Duration.ofMillis(1));
+        try {
+            Thread.sleep(30);
+            handler.cerrarSesionesVencidas();
+            esperarCierre(cliente);
+        } finally {
+            ReflectionTestUtils.setField(handler, "inactividadMaxima", original);
+        }
+
+        assertThat(cliente.cierre).isNotNull();
+    }
+
+    @Test
+    void unaSesionRecienAbiertaYActivaNoSeCierra() throws Exception {
+        Cliente cliente = conectar("sesion-activa-" + UUID.randomUUID());
+
+        handler.cerrarSesionesVencidas();
+        Thread.sleep(150);
+
+        assertThat(cliente.cierre).isNull();
+    }
+
+    @Test
+    void trasCerrarLaUltimaPestanaUnaNuevaSigueRecibiendoMensajes() throws Exception {
+        String[] subs = conCorreos();
+        Cliente primera = conectar(subs[0]);
+        primera.sesion.close();
+        esperarCierre(primera);
+        Cliente nueva = conectar(subs[0]);
+        Cliente otro = conectar(subs[1]);
+
+        otro.enviar(mensaje("hola de nuevo"));
+        otro.siguiente();
+
+        assertThat(nueva.siguiente()).contains("\"tipo\":\"mensaje\"");
     }
 }

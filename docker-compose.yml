@@ -20,14 +20,20 @@ services:
       CHAT_ALLOWED_ORIGINS: ${CHAT_ALLOWED_ORIGINS:-http://localhost:5173}
       CHAT_RETENCION: ${CHAT_RETENCION:-90d}
       MS_MASCOTAS_BASE_URL: http://ms-mascotas:8082
+      # secreto de servicio para llamar a /internal/** de ms-mascotas (el mismo que tiene ms-mascotas)
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN:?Define INTERNAL_API_TOKEN en .env (minimo 32 caracteres)}
       # Aviso por correo de mensajes nuevos: publica en SNS (LocalStack, que levanta ms-alertas);
       # ms-alertas lo consume por SQS y envía el correo. En AWS estas variables las pone Terraform.
       AWS_REGION: us-east-1
       AWS_ENDPOINT_OVERRIDE: http://ms-alertas-localstack:4566
       AWS_SNS_TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:sanos-eventos
       CHAT_AVISO_INTERVALO: ${CHAT_AVISO_INTERVALO:-30m}
+      # reportes eliminados en ms-mascotas: se borran sus conversaciones (cola opcional; la crea el init de LocalStack de ms-alertas)
+      SQS_COLA_MASCOTA_ELIMINADA_URL: http://ms-alertas-localstack:4566/000000000000/cola-chat-mascota-eliminada
     ports:
-      - "8084:8084"
+      # solo la maquina local (el navegador abre el WebSocket en localhost). En AWS el unico camino publico
+      # es CloudFront/ALB hacia /ws/chat; el REST (/chat/**) debe quedar solo para el BFF.
+      - "127.0.0.1:8084:8084"
     networks:
       - sanos-y-salvos-network
 
