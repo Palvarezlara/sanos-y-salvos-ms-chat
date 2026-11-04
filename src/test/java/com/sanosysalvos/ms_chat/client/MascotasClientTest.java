@@ -76,13 +76,13 @@ class MascotasClientTest {
     }
 
     @Test
-    void sinSecretoConfiguradoNoEnviaElHeader() {
-        estado = 200;
-        cuerpo = "{\"mascotaId\":\"m1\",\"duenoSub\":\"sub-1\"}";
-
-        cliente("").obtenerDueno("m1");
-
-        assertThat(tokenRecibido).isNull();
+    void sinSecretoElServicioNoArranca() {
+        /* sin el secreto ms-mascotas respondia 401 y parecia una caida: mejor fallar al arrancar y decir por que */
+        for (String malo : new String[] { "", "   ", "corto" }) {
+            assertThatThrownBy(() -> cliente(malo)).isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("INTERNAL_API_TOKEN");
+        }
+        assertThatThrownBy(() -> cliente(null)).isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -107,6 +107,6 @@ class MascotasClientTest {
         estado = 401;
         cuerpo = "";
 
-        assertThatThrownBy(() -> cliente("secreto-equivocado").obtenerDueno("m1")).isInstanceOf(ServicioNoDisponibleException.class);
+        assertThatThrownBy(() -> cliente("otro-secreto-de-servicio-igual-de-largo-que-el-real-123").obtenerDueno("m1")).isInstanceOf(ServicioNoDisponibleException.class);
     }
 }

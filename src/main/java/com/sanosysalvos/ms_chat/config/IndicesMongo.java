@@ -7,18 +7,19 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.index.Index;
+import org.springframework.data.mongodb.core.index.IndexOperations;
 import org.springframework.stereotype.Component;
 
 import com.sanosysalvos.ms_chat.model.Conversacion;
 import com.sanosysalvos.ms_chat.model.Mensaje;
 
 /**
- * Crea los índices al arrancar. Los dos TTL son lo que borra los mensajes (y las
- * conversaciones sin actividad) pasado el plazo de retención, sin tareas
- * programadas: minimización de datos, Ley 21.719.
+ * Crea los índices al arrancar, cada uno por separado: que falle uno no impide crear los demás. Los dos TTL son lo
+ * que borra los mensajes (y las conversaciones sin actividad, que guardan los correos) pasado el plazo de
+ * retención, sin tareas programadas: minimización de datos, Ley 21.719.
  *
- * Si se cambia chat.retencion con los índices ya creados, Mongo rechaza el cambio:
- * hay que eliminar el índice TTL a mano (o usar collMod) y reiniciar.
+ * Si se cambia chat.retencion con un índice TTL ya creado, Mongo rechaza el cambio: se elimina y se vuelve a
+ * crear con el plazo nuevo. Si un TTL no se puede crear, se registra un ERROR claro: los datos no vencerían.
  */
 @Component
 public class IndicesMongo implements ApplicationRunner {
@@ -38,20 +39,54 @@ public class IndicesMongo implements ApplicationRunner {
         if (!props.crearIndices()) {
             return;
         }
-        try {
-            mongo.indexOps(Mensaje.class).createIndex(
-                    new Index().on("enviadoEn", Sort.Direction.ASC).expire(props.retencion()).named("ttl_enviado_en"));
-            mongo.indexOps(Mensaje.class).createIndex(
-                    new Index().on("conversacionId", Sort.Direction.ASC).on("enviadoEn", Sort.Direction.DESC).named("conversacion_fecha"));
-            mongo.indexOps(Conversacion.class).createIndex(
-                    new Index().on("clave", Sort.Direction.ASC).unique().named("uk_clave"));
-            mongo.indexOps(Conversacion.class).createIndex(
-                    new Index().on("participantes", Sort.Direction.ASC).named("participantes"));
-            mongo.indexOps(Conversacion.class).createIndex(
-                    new Index().on("ultimoMensajeEn", Sort.Direction.ASC).expire(props.retencion()).named("ttl_ultimo_mensaje"));
+        IndexOperations mensajes = mongo.indexOps(Mensaje.class);
+        IndexOperations conversaciones = mongo.indexOps(Conversacion.class);
+
+        int fallidos = 0;
+        fallidos += crearTtl(mensajes, new Index().on("enviadoEn", Sort.Direction.ASC).expire(props.retencion()).named("ttl_enviado_en"));
+        fallidos += crear(mensajes, new Index().on("conversacionId", Sort.Direction.ASC).on("enviadoEn", Sort.Direction.DESC).named("conversacion_fecha"));
+        fallidos += crear(conversaciones, new Index().on("clave", Sort.Direction.ASC).unique().named("uk_clave"));
+        fallidos += crear(conversaciones, new Index().on("participantes", Sort.Direction.ASC).named("participantes"));
+        fallidos += crear(conversaciones, new Index().on("mascotaId", Sort.Direction.ASC).named("mascota"));
+        fallidos += crearTtl(conversaciones, new Index().on("ultimoMensajeEn", Sort.Direction.ASC).expire(props.retencion()).named("ttl_ultimo_mensaje"));
+
+        if (fallidos == 0) {
             log.info("Indices de Mongo listos (retencion de mensajes: {})", props.retencion());
-        } catch (Exception e) {
-            log.error("No se pudieron crear los indices de Mongo; el chat funciona pero sin vencimiento automatico", e);
+        } else {
+            log.error("{} indice(s) de Mongo no se pudieron crear; revisar los errores anteriores", fallidos);
+        }
+    }
+
+    /** 0 si quedó creado, 1 si falló. */
+    private int crear(IndexOperations ops, Index indice) {
+        String nombre = indice.getIndexOptions().get("name").toString();
+        try {
+            ops.createIndex(indice);
+            return 0;
+        } catch (RuntimeException e) {
+            log.error("No se pudo crear el indice '{}': {}", nombre, e.getMessage());
+            return 1;
+        }
+    }
+
+    /* un TTL existente con otro plazo se elimina y se recrea; si aun así falla, los datos no vencerían: ERROR visible */
+    private int crearTtl(IndexOperations ops, Index indice) {
+        String nombre = indice.getIndexOptions().get("name").toString();
+        try {
+            ops.createIndex(indice);
+            return 0;
+        } catch (RuntimeException primero) {
+            log.warn("El indice TTL '{}' ya existe con otras opciones; se recrea con la retencion actual ({})",
+                    nombre, props.retencion());
+            try {
+                ops.dropIndex(nombre);
+                ops.createIndex(indice);
+                return 0;
+            } catch (RuntimeException e) {
+                log.error("NO se pudo crear el indice TTL '{}': los datos de chat NO vencerian solos (Ley 21.719). {}",
+                        nombre, e.getMessage());
+                return 1;
+            }
         }
     }
 }

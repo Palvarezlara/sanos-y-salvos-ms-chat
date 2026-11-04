@@ -10,6 +10,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -52,6 +55,28 @@ public class GlobalExceptionHandler {
     @ExceptionHandler({ HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class })
     public ResponseEntity<Map<String, Object>> malFormada(Exception ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(cuerpo(HttpStatus.BAD_REQUEST, "Solicitud mal formada"));
+    }
+
+    @ExceptionHandler(DemasiadasSolicitudesException.class)
+    public ResponseEntity<Map<String, Object>> demasiadas(DemasiadasSolicitudesException ex) {
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .header("Retry-After", String.valueOf(ex.getReintentarEnSegundos()))
+                .body(cuerpo(HttpStatus.TOO_MANY_REQUESTS, "Demasiadas solicitudes, intenta más tarde"));
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<Map<String, Object>> parametroFaltante(MissingServletRequestParameterException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(cuerpo(HttpStatus.BAD_REQUEST, "Falta un parámetro obligatorio"));
+    }
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<Map<String, Object>> metodoNoPermitido(HttpRequestMethodNotSupportedException ex) {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(cuerpo(HttpStatus.METHOD_NOT_ALLOWED, "Método no permitido"));
+    }
+
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<Map<String, Object>> rutaInexistente(NoResourceFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body(cuerpo(HttpStatus.NOT_FOUND, "Recurso no encontrado"));
     }
 
     @ExceptionHandler(Exception.class)

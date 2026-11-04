@@ -3,6 +3,8 @@ package com.sanosysalvos.ms_chat.client;
 import java.time.Duration;
 import java.util.Optional;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -23,19 +25,24 @@ import com.sanosysalvos.ms_chat.exception.ServicioNoDisponibleException;
 @Component
 public class MascotasClient {
 
+    private static final Logger log = LoggerFactory.getLogger(MascotasClient.class);
+
     private final RestClient restClient;
 
     public MascotasClient(ChatProperties props, @Value("${internal.api-token:}") String tokenInterno) {
+        // Sin el secreto, ms-mascotas rechaza todo con 401 y parecia una caida del servicio: se falla al arrancar
+        if (tokenInterno == null || tokenInterno.strip().length() < 32) {
+            throw new IllegalStateException(
+                    "INTERNAL_API_TOKEN no esta definido (minimo 32 caracteres): ms-mascotas rechazaria las consultas internas");
+        }
         SimpleClientHttpRequestFactory fabrica = new SimpleClientHttpRequestFactory();
         fabrica.setConnectTimeout(Duration.ofSeconds(3));
         fabrica.setReadTimeout(Duration.ofSeconds(5));
-        RestClient.Builder builder = RestClient.builder()
+        this.restClient = RestClient.builder()
                 .baseUrl(props.mascotasBaseUrl())
-                .requestFactory(fabrica);
-        if (tokenInterno != null && !tokenInterno.isBlank()) {
-            builder.defaultHeader("X-Internal-Token", tokenInterno);
-        }
-        this.restClient = builder.build();
+                .requestFactory(fabrica)
+                .defaultHeader("X-Internal-Token", tokenInterno.strip())
+                .build();
     }
 
     public Optional<DuenoMascotaDto> obtenerDueno(String mascotaId) {
@@ -47,6 +54,11 @@ public class MascotasClient {
                     .body(DuenoMascotaDto.class));
         } catch (HttpClientErrorException.NotFound e) {
             return Optional.empty();
+        } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden e) {
+            // es configuracion (secreto distinto en ms-mascotas), no una caida: se deja claro en el log
+            log.error("ms-mascotas rechazo la credencial de servicio (HTTP {}): revisar INTERNAL_API_TOKEN en ambos servicios",
+                    e.getStatusCode().value());
+            throw new ServicioNoDisponibleException("ms-mascotas rechazo la credencial de servicio", e);
         } catch (RestClientException e) {
             throw new ServicioNoDisponibleException("No se pudo consultar ms-mascotas", e);
         }
