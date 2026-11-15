@@ -24,6 +24,14 @@ chat:
   ticket-secret: secreto-de-prueba-de-al-menos-32-caracteres!!
   crear-indices: false
 
+# secreto de servicio (el cliente de ms-mascotas y el filtro de X-User-Email exigen minimo 32 caracteres)
+internal:
+  api-token: secreto-de-servicio-de-prueba-de-al-menos-32-caracteres
+
+sqs:
+  consumidor:
+    auto-arranque: false # los consumidores no deben levantar un hilo real en los tests
+
 aws:
   region: us-east-1
   sns:

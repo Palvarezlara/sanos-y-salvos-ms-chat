@@ -41,6 +41,9 @@ public class TicketValidator {
     private final Clock clock;
     /* jti -> vencimiento; evita que un ticket interceptado se use dos veces */
     private final Map<String, Instant> usados = new ConcurrentHashMap<>();
+    /* la limpieza recorre todo el mapa: se hace como mucho cada 30 s, no en cada conexion (tras un reinicio
+       reconectan todos a la vez); un ticket vencido igual se rechaza por su exp, asi que no hay riesgo */
+    private volatile Instant ultimaLimpieza = Instant.EPOCH;
 
     public TicketValidator(ChatProperties props, Clock clock) {
         this.clock = clock;
@@ -95,6 +98,10 @@ public class TicketValidator {
     }
 
     private void limpiarVencidos(Instant ahora) {
+        if (ahora.isBefore(ultimaLimpieza.plusSeconds(30))) {
+            return;
+        }
+        ultimaLimpieza = ahora;
         usados.values().removeIf(vence -> !vence.isAfter(ahora));
     }
 }

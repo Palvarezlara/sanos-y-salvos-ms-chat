@@ -1,13 +1,17 @@
 package com.sanosysalvos.ms_chat.ws;
 
 import java.time.Clock;
+import java.io.IOException;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
 import org.springframework.web.socket.TextMessage;
@@ -47,6 +51,8 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     private static final int MAX_SESIONES_POR_USUARIO = 5;
     private static final int MAX_BYTES_ENTRANTES = 8 * 1024;
     private static final String ATRIBUTO_SEGURA = "segura";
+    /* codigo propio (4000-4999): el frontend lo usa para pedir un ticket nuevo y reconectar */
+    static final int CODIGO_SESION_EXPIRADA = 4001;
 
     private final ChatService chatService;
     private final AvisoCorreoService avisoCorreo;
@@ -56,9 +62,17 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
 
     private final Map<String, Set<WebSocketSession>> sesionesPorUsuario = new ConcurrentHashMap<>();
     private final Map<String, LimitadorVentana> limitadores = new ConcurrentHashMap<>();
+    /* momento de apertura y de la ultima actividad de cada sesion, para cerrar las vencidas */
+    private final Map<String, Instant> abiertas = new ConcurrentHashMap<>();
+    private final Map<String, Instant> ultimaActividad = new ConcurrentHashMap<>();
+    private final Duration vidaMaxima;
+    private final Duration inactividadMaxima;
 
     public ChatWebSocketHandler(ChatService chatService, AvisoCorreoService avisoCorreo, ChatProperties props,
-            Clock clock) {
+            Clock clock, @Value("${chat.ws-vida-maxima-minutos:30}") long vidaMaximaMinutos,
+            @Value("${chat.ws-inactividad-segundos:120}") long inactividadSegundos) {
+        this.vidaMaxima = Duration.ofMinutes(vidaMaximaMinutos);
+        this.inactividadMaxima = Duration.ofSeconds(inactividadSegundos);
         this.chatService = chatService;
         this.avisoCorreo = avisoCorreo;
         this.props = props;
@@ -75,12 +89,25 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         /* varios hilos pueden escribir a la misma sesión (el del emisor y el de quien le responde) */
         WebSocketSession segura = new ConcurrentWebSocketSessionDecorator(sesion, 5_000, 64 * 1024);
 
-        Set<WebSocketSession> conjunto = sesionesPorUsuario.computeIfAbsent(sub, k -> ConcurrentHashMap.newKeySet());
-        if (conjunto.size() >= MAX_SESIONES_POR_USUARIO) {
+        /* compute es atómico respecto de afterConnectionClosed: antes, cerrar la última pestaña borraba el conjunto
+           justo cuando una pestaña nueva lo había obtenido, y esa quedaba fuera del registro sin recibir nada */
+        boolean[] aceptada = { true };
+        sesionesPorUsuario.compute(sub, (k, existente) -> {
+            Set<WebSocketSession> conjunto = existente != null ? existente : ConcurrentHashMap.newKeySet();
+            if (conjunto.size() >= MAX_SESIONES_POR_USUARIO) {
+                aceptada[0] = false;
+                return existente;
+            }
+            conjunto.add(segura);
+            return conjunto;
+        });
+        if (!aceptada[0]) {
             sesion.close(CloseStatus.POLICY_VIOLATION.withReason("Demasiadas conexiones abiertas"));
             return;
         }
-        conjunto.add(segura);
+        Instant ahora = clock.instant();
+        abiertas.put(sesion.getId(), ahora);
+        ultimaActividad.put(sesion.getId(), ahora);
         sesion.getAttributes().put(ATRIBUTO_SEGURA, segura);
         limitadores.put(sesion.getId(),
                 new LimitadorVentana(props.maxMensajesPorVentana(), Duration.ofSeconds(props.ventanaSegundos()), clock));
@@ -92,6 +119,7 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
         if (segura == null) {
             return;
         }
+        ultimaActividad.put(sesion.getId(), clock.instant());
         if (mensaje.getPayloadLength() > MAX_BYTES_ENTRANTES) {
             enviarError(segura, "mensaje_muy_grande", "El mensaje es demasiado grande");
             return;
@@ -145,17 +173,39 @@ public class ChatWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionClosed(WebSocketSession sesion, CloseStatus estado) {
         limitadores.remove(sesion.getId());
+        abiertas.remove(sesion.getId());
+        ultimaActividad.remove(sesion.getId());
         Object sub = sesion.getAttributes().get(TicketHandshakeInterceptor.ATRIBUTO_SUB);
         if (sub == null) {
             return;
         }
-        Set<WebSocketSession> conjunto = sesionesPorUsuario.get(sub.toString());
-        if (conjunto != null) {
+        sesionesPorUsuario.computeIfPresent(sub.toString(), (k, conjunto) -> {
             conjunto.removeIf(s -> s.getId().equals(sesion.getId()));
-            if (conjunto.isEmpty()) {
-                sesionesPorUsuario.remove(sub.toString(), conjunto);
+            return conjunto.isEmpty() ? null : conjunto;
+        });
+    }
+
+    /**
+     * El ticket autoriza solo el apretón de manos: sin esto, tras un logout o una cuenta deshabilitada el socket
+     * abierto seguía enviando y recibiendo. Se cierra a los chat.ws-vida-maxima-minutos (el cliente pide un
+     * ticket nuevo y reconecta) y si no llega ningún marco, ni ping, en chat.ws-inactividad-segundos.
+     */
+    @Scheduled(fixedDelay = 30_000)
+    void cerrarSesionesVencidas() {
+        Instant ahora = clock.instant();
+        sesionesPorUsuario.values().forEach(conjunto -> conjunto.forEach(sesion -> {
+            Instant abierta = abiertas.get(sesion.getId());
+            Instant actividad = ultimaActividad.get(sesion.getId());
+            boolean vencida = abierta != null && abierta.plus(vidaMaxima).isBefore(ahora);
+            boolean inactiva = actividad != null && actividad.plus(inactividadMaxima).isBefore(ahora);
+            if (vencida || inactiva) {
+                try {
+                    sesion.close(new CloseStatus(CODIGO_SESION_EXPIRADA, "Sesion expirada, vuelve a conectar"));
+                } catch (IOException e) {
+                    log.debug("No se pudo cerrar la sesion {}: {}", sesion.getId(), e.getClass().getSimpleName());
+                }
             }
-        }
+        }));
     }
 
     @Override

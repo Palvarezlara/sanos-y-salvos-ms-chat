@@ -3,8 +3,12 @@ package com.sanosysalvos.ms_chat.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import java.time.Clock;
 import java.time.Duration;
@@ -42,9 +46,16 @@ class AvisoCorreoServiceTest {
     void preparar() {
         ChatProperties props = new ChatProperties("x", List.of(), Duration.ofDays(90),
                 "http://ms-mascotas:8082", 1000, 20, 10, false, Duration.ofMinutes(30));
-        servicio = new AvisoCorreoService(conversaciones, publisher, props, Clock.fixed(AHORA, ZoneOffset.UTC));
+        servicio = new AvisoCorreoService(conversaciones, publisher, props, Clock.fixed(AHORA, ZoneOffset.UTC), Runnable::run);
         conversacion = new Conversacion("m1", "Firu", "dueno", "interesado", AHORA.minusSeconds(60));
         conversacion.registrarCorreos("dueno@example.com", "interesado@example.com");
+    }
+
+    @BeforeEach
+    void sellosLibres() {
+        /* por defecto el sello atomico se obtiene (nadie avisó antes) */
+        lenient().when(conversaciones.sellarAvisoDueno(any(), any(), any())).thenReturn(1L);
+        lenient().when(conversaciones.sellarAvisoInteresado(any(), any(), any())).thenReturn(1L);
     }
 
     @Test
@@ -55,8 +66,8 @@ class AvisoCorreoServiceTest {
         verify(publisher).publicarMensajeNuevo(captor.capture());
         assertThat(captor.getValue().emailDestino()).isEqualTo("dueno@example.com");
         assertThat(captor.getValue().mascotaNombre()).isEqualTo("Firu");
-        /* queda registrado para no volver a avisar enseguida */
-        verify(conversaciones).save(conversacion);
+        /* queda sellado (atomico) para no volver a avisar enseguida */
+        verify(conversaciones).sellarAvisoDueno(any(), any(), any());
     }
 
     @Test
@@ -108,8 +119,51 @@ class AvisoCorreoServiceTest {
 
         servicio.avisarSiCorresponde(conversacion, "interesado", sub -> false);
 
-        /* no se guardó el aviso como hecho: el próximo mensaje lo vuelve a intentar */
-        verify(conversaciones, never()).save(any());
-        assertThat(conversacion.puedeAvisar("dueno", AHORA, Duration.ofMinutes(30))).isTrue();
+        /* se libera el sello: el próximo mensaje lo vuelve a intentar */
+        verify(conversaciones).liberarAvisoDueno(any(), eq(AHORA));
+    }
+
+    @Test
+    void dosMensajesSimultaneosNoGeneranDosCorreos() {
+        /* el segundo mensaje encuentra el sello ya puesto por el primero: la actualización atómica devuelve 0 */
+        when(conversaciones.sellarAvisoDueno(any(), any(), any())).thenReturn(1L, 0L);
+
+        servicio.avisarSiCorresponde(conversacion, "interesado", sub -> false);
+        servicio.avisarSiCorresponde(conversacion, "interesado", sub -> false);
+
+        verify(publisher, times(1)).publicarMensajeNuevo(any());
+    }
+
+    @Test
+    void siLaColaDeAvisosEstaLlenaSeLiberaElSelloSinRomperElChat() {
+        java.util.concurrent.Executor llena = r -> {
+            throw new java.util.concurrent.RejectedExecutionException("cola llena");
+        };
+        servicio = new AvisoCorreoService(conversaciones, publisher,
+                new ChatProperties("x", List.of(), Duration.ofDays(90), "http://ms-mascotas:8082", 1000, 20, 10, false,
+                        Duration.ofMinutes(30)),
+                Clock.fixed(AHORA, ZoneOffset.UTC), llena);
+
+        servicio.avisarSiCorresponde(conversacion, "interesado", sub -> false);
+
+        verify(publisher, never()).publicarMensajeNuevo(any());
+        verify(conversaciones).liberarAvisoDueno(any(), eq(AHORA));
+    }
+
+    @Test
+    void laPublicacionSeHaceEnOtroHiloNoEnElDelEmisor() {
+        java.util.List<Runnable> pendientes = new java.util.ArrayList<>();
+        servicio = new AvisoCorreoService(conversaciones, publisher,
+                new ChatProperties("x", List.of(), Duration.ofDays(90), "http://ms-mascotas:8082", 1000, 20, 10, false,
+                        Duration.ofMinutes(30)),
+                Clock.fixed(AHORA, ZoneOffset.UTC), pendientes::add);
+
+        servicio.avisarSiCorresponde(conversacion, "interesado", sub -> false);
+
+        /* todavia no se publicó: quedó encolado para el hilo de avisos */
+        verify(publisher, never()).publicarMensajeNuevo(any());
+        assertThat(pendientes).hasSize(1);
+        pendientes.get(0).run();
+        verify(publisher).publicarMensajeNuevo(any());
     }
 }

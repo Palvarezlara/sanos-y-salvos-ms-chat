@@ -11,4 +11,6 @@ import com.sanosysalvos.ms_chat.model.Mensaje;
 public interface MensajeRepository extends MongoRepository<Mensaje, String> {
 
     List<Mensaje> findByConversacionIdAndEnviadoEnBefore(String conversacionId, Instant antes, Pageable pageable);
+
+    void deleteByConversacionId(String conversacionId);
 }
